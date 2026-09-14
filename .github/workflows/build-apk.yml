@@ -1,6 +1,8 @@
 name: Build APK
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
     inputs:
       app_name:
@@ -37,20 +39,15 @@ jobs:
 
       - name: Generate Android project
         env:
-          APP_NAME: ${{ inputs.app_name }}
-          PACKAGE_NAME: ${{ inputs.package_name }}
-          WEBSITE_URL: ${{ inputs.website_url }}
+          APP_NAME: ${{ inputs.app_name || 'APK Builder' }}
+          PACKAGE_NAME: ${{ inputs.package_name || 'com.emzaro.apkbuilder' }}
+          WEBSITE_URL: ${{ inputs.website_url || '' }}
         run: |
           set -e
           mkdir -p builder/app/src/main/java
           mkdir -p builder/app/src/main/res/values
-          mkdir -p builder/app/src/main/res/mipmap-hdpi
-          mkdir -p builder/app/src/main/res/mipmap-mdpi
-          mkdir -p builder/app/src/main/res/mipmap-xhdpi
-          mkdir -p builder/app/src/main/res/mipmap-xxhdpi
-          mkdir -p builder/app/src/main/res/mipmap-xxxhdpi
           echo "pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }" > builder/settings.gradle
-          echo "dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }" >> builder/settings.gradle
+          echo "dependencyResolutionManagement { repositoriesMode.set(org.gradle.api.initialization.resolve.RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }" >> builder/settings.gradle
           echo "rootProject.name='APKBuilderGenerated'" >> builder/settings.gradle
           echo "include ':app'" >> builder/settings.gradle
           cat > builder/build.gradle <<'EOF'
@@ -66,53 +63,46 @@ kotlin.code.style=official
 EOF
           cat > builder/app/build.gradle <<'EOF'
 plugins { id 'com.android.application'; id 'org.jetbrains.kotlin.android' }
-
 android { namespace 'APP_PACKAGE'; compileSdk 35
   defaultConfig { applicationId 'APP_PACKAGE'; minSdk 24; targetSdk 35; versionCode 1; versionName '1.0' }
 }
-
 dependencies { implementation 'androidx.core:core-ktx:1.15.0'; implementation 'androidx.appcompat:appcompat:1.7.0' }
 EOF
           sed -i "s/APP_PACKAGE/${PACKAGE_NAME}/g" builder/app/build.gradle
-          mkdir -p "builder/app/src/main/java/$(echo "$PACKAGE_NAME" | tr '.' '/')"
-          cat > "builder/app/src/main/java/$(echo "$PACKAGE_NAME" | tr '.' '/')/MainActivity.kt" <<'EOF'
+          JAVA_DIR="builder/app/src/main/java/$(echo "$PACKAGE_NAME" | tr '.' '/')"
+          mkdir -p "$JAVA_DIR"
+          cat > "$JAVA_DIR/MainActivity.kt" <<'EOF'
 package APP_PACKAGE
-
 import android.annotation.SuppressLint
 import android.os.Bundle
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
-
 class MainActivity : AppCompatActivity() {
-    @SuppressLint("SetJavaScriptEnabled")
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        val web = WebView(this)
-        web.settings.javaScriptEnabled = true
-        web.settings.domStorageEnabled = true
-        web.webViewClient = WebViewClient()
-        web.webChromeClient = WebChromeClient()
-        val target = "APP_URL"
-        if (target.isNotBlank()) web.loadUrl(target)
-        else web.loadDataWithBaseURL(null, "<html><body style='background:#000;color:#fff;font-family:sans-serif;text-align:center;padding:60px'><h1>APP_NAME</h1><p>Your APK was built successfully.</p></body></html>", "text/html", "UTF-8", null)
-        setContentView(web)
-    }
+  @SuppressLint("SetJavaScriptEnabled")
+  override fun onCreate(savedInstanceState: Bundle?) {
+    super.onCreate(savedInstanceState)
+    val web = WebView(this)
+    web.settings.javaScriptEnabled = true
+    web.settings.domStorageEnabled = true
+    web.webViewClient = WebViewClient()
+    web.webChromeClient = WebChromeClient()
+    val target = "APP_URL"
+    if (target.isNotBlank()) web.loadUrl(target) else web.loadDataWithBaseURL(null, "<html><body style='background:#000;color:#fff;font-family:sans-serif;text-align:center;padding:60px'><h1>APP_NAME</h1><p>Your APK was built successfully.</p></body></html>", "text/html", "UTF-8", null)
+    setContentView(web)
+  }
 }
 EOF
-          sed -i "s|APP_PACKAGE|${PACKAGE_NAME}|g; s|APP_URL|${WEBSITE_URL}|g; s|APP_NAME|${APP_NAME}|g" "builder/app/src/main/java/$(echo "$PACKAGE_NAME" | tr '.' '/')/MainActivity.kt"
+          sed -i "s|APP_PACKAGE|${PACKAGE_NAME}|g; s|APP_URL|${WEBSITE_URL}|g; s|APP_NAME|${APP_NAME}|g" "$JAVA_DIR/MainActivity.kt"
           cat > builder/app/src/main/AndroidManifest.xml <<'EOF'
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <uses-permission android:name="android.permission.INTERNET" />
-    <application android:theme="@style/AppTheme" android:label="APP_NAME" android:usesCleartextTraffic="true">
-        <activity android:name=".MainActivity" android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
-    </application>
+  <uses-permission android:name="android.permission.INTERNET" />
+  <application android:theme="@style/AppTheme" android:label="APP_NAME" android:usesCleartextTraffic="true">
+    <activity android:name=".MainActivity" android:exported="true">
+      <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+    </activity>
+  </application>
 </manifest>
 EOF
           sed -i "s|APP_NAME|${APP_NAME}|g" builder/app/src/main/AndroidManifest.xml
@@ -122,12 +112,11 @@ EOF
 
       - name: Build debug APK
         working-directory: builder
-        run: |
-          gradle assembleDebug --no-daemon
+        run: gradle assembleDebug --no-daemon
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: apk-${{ inputs.app_name }}
+          name: apk-${{ inputs.app_name || 'APK-Builder' }}
           path: builder/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
